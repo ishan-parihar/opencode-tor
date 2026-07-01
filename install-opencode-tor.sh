@@ -28,13 +28,15 @@ echo "📦 Package manager: $PKG_MGR"
 
 install_deps() {
     case "$PKG_MGR" in
-        pacman) sudo pacman -S --noconfirm tor proxychains-ng npm ;;
+        pacman) sudo pacman -S --noconfirm tor proxychains-ng ;;
         apt)
-            sudo apt update
-            # Install netcat-openbsd for -N flag support (needed for NEWNYM)
-            sudo apt install -y tor proxychains4 npm netcat-openbsd
+            sudo apt update -qq
+            sudo apt install -y tor proxychains4 netcat-openbsd
+            if ! command -v npm &>/dev/null; then
+                sudo apt install -y npm || true
+            fi
             ;;
-        dnf) sudo dnf install -y tor proxychains-ng npm ;;
+        dnf) sudo dnf install -y tor proxychains-ng ;;
         brew) brew install tor proxychains-ng node ;;
         *) echo "❌ Install manually: tor, proxychains-ng, npm"; exit 1 ;;
     esac
@@ -65,8 +67,10 @@ REAL_OPENCODE=$(which opencode 2>/dev/null || echo "")
 [ -z "$REAL_OPENCODE" ] && echo "❌ opencode not found" && exit 1
 echo "  → Binary: $REAL_OPENCODE"
 
+REAL_OPENCODE_BIN=$(readlink -f "$REAL_OPENCODE")
+
 mkdir -p "$CONFIG_DIR/proxychains"
-cat > "$CONFIG_DIR/proxychains/opencode.conf" <<'EOF'
+cat > "$CONFIG_DIR/proxychains/opencode.conf" <<'CONF_EOF'
 dynamic_chain
 proxy_dns
 tcp_read_time_out 30000
@@ -78,42 +82,46 @@ localnet 172.16.0.0/255.240.0.0
 localnet 192.168.0.0/255.255.0.0
 [ProxyList]
 socks5 127.0.0.1 9050
-EOF
+CONF_EOF
 
 mkdir -p "$INSTALL_DIR"
-cat > "$INSTALL_DIR/opencode" <<WRAPPER
+
+mv "$REAL_OPENCODE" "${REAL_OPENCODE}.real" 2>/dev/null || true
+cp "$REAL_OPENCODE_BIN" "${INSTALL_DIR}/opencode.real" 2>/dev/null || true
+
+cat > "${INSTALL_DIR}/opencode" <<'WRAPPER_EOF'
 #!/bin/bash
 TOR_CONTROL="127.0.0.1:9051"
-TOR_CONTROL_PASS="$TOR_CONTROL_PASS"
-NC_BIN="$NC_BIN"
-if \$NC_BIN -z "\${TOR_CONTROL%%:*}" "\${TOR_CONTROL##*:}" 2>/dev/null; then
-    (echo -e "AUTHENTICATE \\"\$TOR_CONTROL_PASS\\"\\r"; sleep 1; echo -e "SIGNAL NEWNYM\\r"; sleep 1; echo -e "QUIT\\r") | \$NC_BIN -N "\${TOR_CONTROL%%:*}" "\${TOR_CONTROL##*:}" 2>/dev/null >/dev/null
+TOR_CONTROL_PASS="PLACEHOLDER_TOR_PASS"
+NC_BIN="PLACEHOLDER_NC"
+if $NC_BIN -z "127.0.0.1" "9051" 2>/dev/null; then
+    (echo -e "AUTHENTICATE \"${TOR_CONTROL_PASS}\"\r"; sleep 1; echo -e "SIGNAL NEWNYM\r"; sleep 1; echo -e "QUIT\r") | $NC_BIN -N 127.0.0.1 9051 2>/dev/null >/dev/null
     sleep 1
 fi
-exec proxychains4 -f "$CONFIG_DIR/proxychains/opencode.conf" "$REAL_OPENCODE" "\$@"
-WRAPPER
-chmod +x "$INSTALL_DIR/opencode"
+exec proxychains4 -f "$HOME/.config/proxychains/opencode.conf" "$HOME/.local/bin/opencode.real" "$@"
+WRAPPER_EOF
+sed -i "s|PLACEHOLDER_TOR_PASS|$TOR_CONTROL_PASS|g; s|PLACEHOLDER_NC|$NC_BIN|g" "${INSTALL_DIR}/opencode"
+chmod +x "${INSTALL_DIR}/opencode"
 
-cat > "$INSTALL_DIR/reset-opencode" <<RESET
+cat > "${INSTALL_DIR}/reset-opencode" <<'RESET_EOF'
 #!/bin/bash
 set -euo pipefail
-TOR_CONTROL="127.0.0.1:9051"
-TOR_CONTROL_PASS="$TOR_CONTROL_PASS"
-TOR_SOCKS="127.0.0.1:9050"
-NC_BIN="$NC_BIN"
+NC_BIN="PLACEHOLDER_NC"
+TOR_CONTROL_PASS="PLACEHOLDER_TOR_PASS"
 echo "🔄 Rotating Tor circuit..."
-if \$NC_BIN -z "\${TOR_CONTROL%%:*}" "\${TOR_CONTROL##*:}" 2>/dev/null; then
-    (echo -e "AUTHENTICATE \\"\$TOR_CONTROL_PASS\\"\\r"; sleep 1; echo -e "SIGNAL NEWNYM\\r"; sleep 1; echo -e "QUIT\\r") | \$NC_BIN -N "\${TOR_CONTROL%%:*}" "\${TOR_CONTROL##*:}" 2>/dev/null | grep -q "250 OK" && echo "  → Sent NEWNYM" || echo "  → NEWNYM sent"
+if $NC_BIN -z "127.0.0.1" "9051" 2>/dev/null; then
+    (echo -e "AUTHENTICATE \"${TOR_CONTROL_PASS}\"\r"; sleep 1; echo -e "SIGNAL NEWNYM\r"; sleep 1; echo -e "QUIT\r") | $NC_BIN -N 127.0.0.1 9051 2>/dev/null | grep -q "250 OK" && echo "  → Sent NEWNYM" || echo "  → NEWNYM sent"
     sleep 3
 else
     echo "  → ControlPort unavailable, using SIGHUP"
-    sudo kill -HUP \$(pgrep -x tor) 2>/dev/null || sudo systemctl start tor
+    sudo kill -HUP $(pgrep -x tor) 2>/dev/null || sudo systemctl start tor
     sleep 3
 fi
-NEW_IP=\$(curl -s --max-time 10 --socks5-hostname "\$TOR_SOCKS" https://api.ipify.org 2>/dev/null || echo "failed")
-[[ "\$NEW_IP" != "failed" ]] && echo "✅ New IP: \$NEW_IP" || echo "⚠️  Tor may be bootstrapping, wait 30s"
-RESET
-chmod +x "$INSTALL_DIR/reset-opencode"
+NEW_IP=$(curl -s --max-time 10 --socks5-hostname "127.0.0.1:9050" https://api.ipify.org 2>/dev/null || echo "failed")
+[[ "$NEW_IP" != "failed" ]] && echo "✅ New IP: $NEW_IP" || echo "⚠️  Tor may be bootstrapping, wait 30s"
+RESET_EOF
+sed -i "s|PLACEHOLDER_TOR_PASS|$TOR_CONTROL_PASS|g; s|PLACEHOLDER_NC|$NC_BIN|g" "${INSTALL_DIR}/reset-opencode"
+chmod +x "${INSTALL_DIR}/reset-opencode"
 
 if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
     echo "⚠️  Add to ~/.bashrc: export PATH=\"\$HOME/.local/bin:\$PATH\""
