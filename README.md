@@ -12,13 +12,13 @@ Routes OpenCode through the Tor network with automatic IP rotation on every laun
 ## Install
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/ishan-parihar/opencode-tor/main/install-opencode-tor.sh | bash
+curl -sSL https://raw.githubusercontent.com/ishan-parihar/opencode-tor/master/install-opencode-tor.sh | bash
 ```
 
 Or download and run:
 
 ```bash
-wget https://raw.githubusercontent.com/ishan-parihar/opencode-tor/main/install-opencode-tor.sh
+wget https://raw.githubusercontent.com/ishan-parihar/opencode-tor/master/install-opencode-tor.sh
 chmod +x install-opencode-tor.sh
 ./install-opencode-tor.sh
 ```
