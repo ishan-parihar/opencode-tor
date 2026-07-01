@@ -42,7 +42,7 @@ reset-opencode
 
 ## Requirements
 
-- Linux (tested on Arch, Ubuntu) or macOS
+- Linux (tested on Arch, Ubuntu, Debian 12) or macOS
 - npm / Node.js
 - sudo access (for Tor installation)
 
