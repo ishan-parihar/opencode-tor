@@ -5,6 +5,15 @@ TOR_CONTROL_PASS="opencode-proxy"
 INSTALL_DIR="${HOME}/.local/bin"
 CONFIG_DIR="${HOME}/.config"
 
+detect_nc_binary() {
+    if command -v nc.openbsd &>/dev/null; then echo "nc.openbsd"
+    elif command -v nc &>/dev/null; then echo "nc"
+    else echo "nc"
+    fi
+}
+
+NC_BIN=$(detect_nc_binary)
+
 detect_pkg_manager() {
     if command -v pacman &>/dev/null; then echo "pacman"
     elif command -v apt &>/dev/null; then echo "apt"
@@ -20,7 +29,11 @@ echo "📦 Package manager: $PKG_MGR"
 install_deps() {
     case "$PKG_MGR" in
         pacman) sudo pacman -S --noconfirm tor proxychains-ng npm ;;
-        apt) sudo apt update && sudo apt install -y tor proxychains4 npm ;;
+        apt)
+            sudo apt update
+            # Install netcat-openbsd for -N flag support (needed for NEWNYM)
+            sudo apt install -y tor proxychains4 npm netcat-openbsd
+            ;;
         dnf) sudo dnf install -y tor proxychains-ng npm ;;
         brew) brew install tor proxychains-ng node ;;
         *) echo "❌ Install manually: tor, proxychains-ng, npm"; exit 1 ;;
@@ -72,8 +85,9 @@ cat > "$INSTALL_DIR/opencode" <<WRAPPER
 #!/bin/bash
 TOR_CONTROL="127.0.0.1:9051"
 TOR_CONTROL_PASS="$TOR_CONTROL_PASS"
-if nc -z "\${TOR_CONTROL%%:*}" "\${TOR_CONTROL##*:}" 2>/dev/null; then
-    (echo -e "AUTHENTICATE \\"\$TOR_CONTROL_PASS\\"\\r"; sleep 1; echo -e "SIGNAL NEWNYM\\r"; sleep 1; echo -e "QUIT\\r") | nc -N "\${TOR_CONTROL%%:*}" "\${TOR_CONTROL##*:}" 2>/dev/null >/dev/null
+NC_BIN="$NC_BIN"
+if \$NC_BIN -z "\${TOR_CONTROL%%:*}" "\${TOR_CONTROL##*:}" 2>/dev/null; then
+    (echo -e "AUTHENTICATE \\"\$TOR_CONTROL_PASS\\"\\r"; sleep 1; echo -e "SIGNAL NEWNYM\\r"; sleep 1; echo -e "QUIT\\r") | \$NC_BIN -N "\${TOR_CONTROL%%:*}" "\${TOR_CONTROL##*:}" 2>/dev/null >/dev/null
     sleep 1
 fi
 exec proxychains4 -f "$CONFIG_DIR/proxychains/opencode.conf" "$REAL_OPENCODE" "\$@"
@@ -86,9 +100,10 @@ set -euo pipefail
 TOR_CONTROL="127.0.0.1:9051"
 TOR_CONTROL_PASS="$TOR_CONTROL_PASS"
 TOR_SOCKS="127.0.0.1:9050"
+NC_BIN="$NC_BIN"
 echo "🔄 Rotating Tor circuit..."
-if nc -z "\${TOR_CONTROL%%:*}" "\${TOR_CONTROL##*:}" 2>/dev/null; then
-    (echo -e "AUTHENTICATE \\"\$TOR_CONTROL_PASS\\"\\r"; sleep 1; echo -e "SIGNAL NEWNYM\\r"; sleep 1; echo -e "QUIT\\r") | nc -N "\${TOR_CONTROL%%:*}" "\${TOR_CONTROL##*:}" 2>/dev/null | grep -q "250 OK" && echo "  → Sent NEWNYM" || echo "  → NEWNYM sent"
+if \$NC_BIN -z "\${TOR_CONTROL%%:*}" "\${TOR_CONTROL##*:}" 2>/dev/null; then
+    (echo -e "AUTHENTICATE \\"\$TOR_CONTROL_PASS\\"\\r"; sleep 1; echo -e "SIGNAL NEWNYM\\r"; sleep 1; echo -e "QUIT\\r") | \$NC_BIN -N "\${TOR_CONTROL%%:*}" "\${TOR_CONTROL##*:}" 2>/dev/null | grep -q "250 OK" && echo "  → Sent NEWNYM" || echo "  → NEWNYM sent"
     sleep 3
 else
     echo "  → ControlPort unavailable, using SIGHUP"
